@@ -45,7 +45,6 @@
 //!
 //! #[derive(Encode, Decode)]
 //! struct LengthPrefixedBytes {
-//!     #[declio(ctx = "Endian::Big")]
 //!     len: u16,
 //!     #[declio(ctx = "Len((*len).try_into()?)")]
 //!     bytes: Vec<u8>,
@@ -154,7 +153,7 @@
 //! struct OptionalExtraData {
 //!     tag: u8,
 //!
-//!     #[declio(ctx = "Endian::Big", skip_if = "*tag != 2")]
+//!     #[declio(skip_if = "*tag != 2")]
 //!     extra_data: Option<u32>,
 //! }
 //! ```

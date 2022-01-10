@@ -6,103 +6,6 @@ use crate::{Decode, Encode, Error};
 #[doc(inline)]
 pub use crate::magic_bytes;
 
-macro_rules! endian_wrappers {
-    ($($(#[$attr:meta])* $name:ident: $endian:expr,)*) => {$(
-        $(#[$attr])*
-        #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name<T>(pub T);
-
-        impl<T> Encode<()> for $name<T>
-        where
-            T: Encode<Endian>,
-        {
-            fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
-            where
-                W: std::io::Write,
-            {
-                self.0.encode($endian, writer)
-            }
-        }
-
-        impl<T> Decode<()> for $name<T>
-        where
-            T: Decode<Endian>,
-        {
-            fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
-            where
-                R: std::io::Read,
-            {
-                T::decode($endian, reader).map(Self)
-            }
-        }
-
-        impl<T> From<T> for $name<T> {
-            fn from(value: T) -> Self {
-                Self(value)
-            }
-        }
-
-        /* NB: Orphan rules prohibit something like this:
-        impl<T> From<$name<T>> for T {
-            fn from(wrapper: $name<T>) -> Self {
-                wrapper.0
-            }
-        }
-        */
-
-        impl<T> $name<T> {
-            /// Unwraps and returns the inner `T` value.
-            pub fn into_inner(self) -> T {
-                self.0
-            }
-        }
-    )*}
-}
-
-endian_wrappers! {
-    /// Little-endian wrapper type for primitives.
-    ///
-    /// Encodes and decodes the inner type in little-endian format.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use declio::Encode;
-    /// use declio::util::LittleEndian;
-    ///
-    /// type Uint = LittleEndian<u32>;
-    ///
-    /// let x: Uint = 0xdeadbeef.into();
-    ///
-    /// let mut bytes = Vec::new();
-    /// x.encode((), &mut bytes).unwrap();
-    ///
-    /// assert_eq!(bytes, &[0xef, 0xbe, 0xad, 0xde]);
-    /// ```
-    LittleEndian: Endian::Little,
-
-    /// Big-endian wrapper type for primitives.
-    ///
-    /// Encodes and decodes the inner type in big-endian format.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use declio::Encode;
-    /// use declio::util::BigEndian;
-    ///
-    /// type Uint = BigEndian<u32>;
-    ///
-    /// let x: Uint = 0xdeadbeef.into();
-    ///
-    /// let mut bytes = Vec::new();
-    /// x.encode((), &mut bytes).unwrap();
-    ///
-    /// assert_eq!(bytes, &[0xde, 0xad, 0xbe, 0xef]);
-    /// ```
-    BigEndian: Endian::Big,
-}
-
 /// Helper module alternative to [`Utf8`], for use in derive macros.
 ///
 /// # Examples
@@ -115,7 +18,6 @@ endian_wrappers! {
 ///
 /// #[derive(Debug, PartialEq, Encode, Decode)]
 /// pub struct Text {
-///     #[declio(ctx = "Endian::Big")]
 ///     len: u32,
 ///
 ///     // Note here, we are using `with = "utf8"` instead of a `Utf8` wrapper type.
@@ -130,34 +32,39 @@ endian_wrappers! {
 /// };
 ///
 /// let mut bytes = Vec::new();
-/// text.encode((), &mut bytes).unwrap();
+/// text.encode((), Endian::Big, &mut bytes).unwrap();
 /// assert_eq!(bytes, b"\x00\x00\x00\x0bHello World");
 ///
 /// let mut decoder = bytes.as_slice();
-/// let decoded = Text::decode((), &mut decoder).unwrap();
+/// let decoded = Text::decode((), Endian::Big, &mut decoder).unwrap();
 /// assert_eq!(decoded, text);
 ///
 /// ```
 pub mod utf8 {
-    use crate::{Decode, Encode, Error};
+    use crate::{ctx::Endian, Decode, Encode, Error};
 
     #[allow(missing_docs)]
-    pub fn encode<S, Ctx, W>(string: &S, ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    pub fn encode<S, Ctx, W>(
+        string: &S,
+        ctx: Ctx,
+        endian: Endian,
+        writer: &mut W,
+    ) -> Result<(), Error>
     where
         S: AsRef<str>,
         [u8]: Encode<Ctx>,
         W: std::io::Write,
     {
-        string.as_ref().as_bytes().encode(ctx, writer)
+        string.as_ref().as_bytes().encode(ctx, endian, writer)
     }
 
     #[allow(missing_docs)]
-    pub fn decode<Ctx, R>(ctx: Ctx, reader: &mut R) -> Result<String, Error>
+    pub fn decode<Ctx, R>(ctx: Ctx, endian: Endian, reader: &mut R) -> Result<String, Error>
     where
         Vec<u8>: Decode<Ctx>,
         R: std::io::Read,
     {
-        let bytes: Vec<u8> = Decode::decode(ctx, reader)?;
+        let bytes: Vec<u8> = Decode::decode(ctx, endian, reader)?;
         let string = String::from_utf8(bytes)?;
         Ok(string)
     }
@@ -178,7 +85,6 @@ pub mod utf8 {
 ///
 /// #[derive(Debug, PartialEq, Encode, Decode)]
 /// pub struct Text {
-///     #[declio(ctx = "Endian::Big")]
 ///     len: u32,
 ///     #[declio(ctx = "Len((*len).try_into()?)")]
 ///     value: Utf8,
@@ -191,11 +97,11 @@ pub mod utf8 {
 /// };
 ///
 /// let mut bytes = Vec::new();
-/// text.encode((), &mut bytes).unwrap();
+/// text.encode((), Endian::Big, &mut bytes).unwrap();
 /// assert_eq!(bytes, b"\x00\x00\x00\x0bHello World");
 ///
 /// let mut decoder = bytes.as_slice();
-/// let decoded = Text::decode((), &mut decoder).unwrap();
+/// let decoded = Text::decode((), Endian::Big, &mut decoder).unwrap();
 /// assert_eq!(decoded, text);
 ///
 /// ```
@@ -203,29 +109,29 @@ pub mod utf8 {
 pub struct Utf8(pub String);
 
 impl Encode<Len> for Utf8 {
-    fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, ctx: Len, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
-        utf8::encode(&self.0, ctx, writer)
+        utf8::encode(&self.0, ctx, endian, writer)
     }
 }
 
 impl Encode<()> for Utf8 {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, _ctx: (), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
-        utf8::encode(&self.0, ((),), writer)
+        utf8::encode(&self.0, ((),), endian, writer)
     }
 }
 
 impl Decode<Len> for Utf8 {
-    fn decode<R>(ctx: Len, reader: &mut R) -> Result<Self, Error>
+    fn decode<R>(ctx: Len, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: std::io::Read,
     {
-        utf8::decode(ctx, reader).map(Self)
+        utf8::decode(ctx, endian, reader).map(Self)
     }
 }
 
@@ -254,6 +160,7 @@ impl From<Utf8> for String {
 /// ```
 /// use declio::{Encode, Decode};
 /// use declio::util::zero_one;
+/// use declio::ctx::Endian;
 ///
 /// #[derive(Debug, PartialEq, Encode, Decode)]
 /// struct MyBoolean {
@@ -265,18 +172,18 @@ impl From<Utf8> for String {
 /// let value = MyBoolean { value: true };
 ///
 /// let mut bytes = Vec::new();
-/// value.encode((), &mut bytes).unwrap();
+/// value.encode((), Endian::Big, &mut bytes).unwrap();
 /// assert_eq!(bytes, b"\x01");
 ///
 /// let mut decoder = bytes.as_slice();
-/// let decoded = MyBoolean::decode((), &mut decoder).unwrap();
+/// let decoded = MyBoolean::decode((), Endian::Big, &mut decoder).unwrap();
 /// assert_eq!(decoded, value);
 /// ```
 pub mod zero_one {
-    use crate::{Decode, Encode, Error};
+    use crate::{ctx::Endian, Decode, Encode, Error};
 
     #[allow(missing_docs)]
-    pub fn encode<W>(b: &bool, _ctx: (), writer: &mut W) -> Result<(), Error>
+    pub fn encode<W>(b: &bool, _ctx: (), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
@@ -284,15 +191,15 @@ pub mod zero_one {
             false => 0,
             true => 1,
         };
-        byte.encode((), writer)
+        byte.encode((), endian, writer)
     }
 
     #[allow(missing_docs)]
-    pub fn decode<R>(_ctx: (), reader: &mut R) -> Result<bool, Error>
+    pub fn decode<R>(_ctx: (), endian: Endian, reader: &mut R) -> Result<bool, Error>
     where
         R: std::io::Read,
     {
-        let byte: u8 = Decode::decode((), reader)?;
+        let byte: u8 = Decode::decode((), endian, reader)?;
         match byte {
             0 => Ok(false),
             1 => Ok(true),
@@ -314,35 +221,36 @@ pub mod zero_one {
 /// ```
 /// use declio::{Encode, Decode};
 /// use declio::util::ZeroOne;
+/// use declio::ctx::Endian;
 ///
 /// let value = ZeroOne(true);
 ///
 /// let mut bytes = Vec::new();
-/// value.encode((), &mut bytes).unwrap();
+/// value.encode((), Endian::Big, &mut bytes).unwrap();
 /// assert_eq!(bytes, b"\x01");
 ///
 /// let mut decoder = bytes.as_slice();
-/// let decoded = ZeroOne::decode((), &mut decoder).unwrap();
+/// let decoded = ZeroOne::decode((), Endian::Big, &mut decoder).unwrap();
 /// assert_eq!(decoded, value);
 /// ```
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ZeroOne(pub bool);
 
 impl Encode<()> for ZeroOne {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, _ctx: (), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
-        zero_one::encode(&self.0, (), writer)
+        zero_one::encode(&self.0, (), endian, writer)
     }
 }
 
 impl Decode<()> for ZeroOne {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+    fn decode<R>(_ctx: (), endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: std::io::Read,
     {
-        zero_one::decode((), reader).map(Self)
+        zero_one::decode((), endian, reader).map(Self)
     }
 }
 

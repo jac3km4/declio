@@ -31,7 +31,7 @@
 //! use declio::ctx::Endian;
 //!
 //! let mut buf: Vec<u8> = Vec::new();
-//! u32::encode(&0xdeadbeef, Endian::Big, &mut buf)
+//! u32::encode(&0xdeadbeef, (), Endian::Big, &mut buf)
 //!     .expect("encode failed");
 //!
 //! assert_eq!(buf, [0xde, 0xad, 0xbe, 0xef]);
@@ -65,10 +65,10 @@
 //!     0xbe, 0xef,
 //! ][..];
 //!
-//! let len = u16::decode(Endian::Big, &mut bytes)
+//! let len = u16::decode((), Endian::Big, &mut bytes)
 //!     .expect("decode len failed");
 //!
-//! let words: Vec<u16> = Vec::decode((Len(len as usize), Endian::Big), &mut bytes)
+//! let words: Vec<u16> = Vec::decode((Len(len as usize)), Endian::Big, &mut bytes)
 //!     .expect("decode bytes failed");
 //!
 //! assert!(bytes.is_empty()); // did we consume the whole buffer?
@@ -98,7 +98,6 @@
 //! #[derive(Debug, PartialEq, Encode, Decode)]
 //! struct WithLength {
 //!     // Context can be passed to the field decoder with a `ctx` attribute.
-//!     #[declio(ctx = "Endian::Little")]
 //!     len: u16,
 //!
 //!     // Context may be different for encode and decode,
@@ -121,11 +120,11 @@
 //!     bytes,
 //! };
 //!
-//! let encoded: Vec<u8> = declio::to_bytes(&with_length)
+//! let encoded: Vec<u8> = declio::to_bytes(&with_length, Endian::Little)
 //!     .expect("encode failed");
 //! assert_eq!(encoded, [0x04, 0x00, 0xde, 0xad, 0xbe, 0xef]);
 //!
-//! let decoded: WithLength = declio::from_bytes(&encoded)
+//! let decoded: WithLength = declio::from_bytes(&encoded, Endian::Little)
 //!     .expect("decode failed");
 //!
 //! assert_eq!(decoded, with_length);
@@ -160,20 +159,20 @@ use std::borrow::Cow;
 use std::{io, mem};
 
 /// Encodes a value into a vector of bytes.
-pub fn to_bytes<T>(value: T) -> Result<Vec<u8>, Error>
+pub fn to_bytes<T>(value: T, endian: Endian) -> Result<Vec<u8>, Error>
 where
     T: Encode,
 {
-    to_bytes_with_context(value, ())
+    to_bytes_with_context(value, (), endian)
 }
 
 /// Encodes a value into a vector of bytes, with context.
-pub fn to_bytes_with_context<T, Ctx>(value: T, ctx: Ctx) -> Result<Vec<u8>, Error>
+pub fn to_bytes_with_context<T, Ctx>(value: T, ctx: Ctx, endian: Endian) -> Result<Vec<u8>, Error>
 where
     T: Encode<Ctx>,
 {
     let mut bytes = Vec::new();
-    value.encode(ctx, &mut bytes)?;
+    value.encode(ctx, endian, &mut bytes)?;
     Ok(bytes)
 }
 
@@ -181,22 +180,26 @@ where
 ///
 /// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
 /// will return an error.
-pub fn from_bytes<T>(bytes: &[u8]) -> Result<T, Error>
+pub fn from_bytes<T>(bytes: &[u8], endian: Endian) -> Result<T, Error>
 where
     T: Decode,
 {
-    from_bytes_with_context(bytes, ())
+    from_bytes_with_context(bytes, (), endian)
 }
 
 /// Decodes a value from a byte slice, with context.
 ///
 /// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
 /// will return an error.
-pub fn from_bytes_with_context<T, Ctx>(mut bytes: &[u8], ctx: Ctx) -> Result<T, Error>
+pub fn from_bytes_with_context<T, Ctx>(
+    mut bytes: &[u8],
+    ctx: Ctx,
+    endian: Endian,
+) -> Result<T, Error>
 where
     T: Decode<Ctx>,
 {
-    let value = T::decode(ctx, &mut bytes)?;
+    let value = T::decode(ctx, endian, &mut bytes)?;
     if bytes.is_empty() {
         Ok(value)
     } else {
@@ -207,7 +210,7 @@ where
 /// A type that can be encoded into a byte stream.
 pub trait Encode<Ctx = ()> {
     /// Encodes `&self` to the given writer.
-    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write;
 }
@@ -215,7 +218,7 @@ pub trait Encode<Ctx = ()> {
 /// A type that can be decoded from a byte stream.
 pub trait Decode<Ctx = ()>: Sized {
     /// Decodes a value from the given reader.
-    fn decode<R>(ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    fn decode<R>(ctx: Ctx, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read;
 }
@@ -224,11 +227,12 @@ impl<T, Ctx> Encode<Ctx> for &T
 where
     T: Encode<Ctx>,
 {
-    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        (*self).encode(ctx, writer)
+        (*self).encode(ctx, endian, writer)
     }
 }
 
@@ -244,7 +248,12 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
-    fn encode<W>(&self, (Len(len), inner_ctx): (Len, Ctx), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(
+        &self,
+        (Len(len), inner_ctx): (Len, Ctx),
+        endian: Endian,
+        writer: &mut W,
+    ) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -253,7 +262,7 @@ where
                 "provided length context does not match the slice length",
             ))
         } else {
-            self.encode((inner_ctx,), writer)
+            self.encode((inner_ctx,), endian, writer)
         }
     }
 }
@@ -269,11 +278,12 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
-    fn encode<W>(&self, len: Len, writer: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, len: Len, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.encode((len, ()), writer)
+        self.encode((len, ()), endian, writer)
     }
 }
 
@@ -285,12 +295,12 @@ where
     /// Encodes each element of the slice in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, (inner_ctx,): (Ctx,), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, (inner_ctx,): (Ctx,), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
         for elem in self {
-            elem.encode(inner_ctx.clone(), writer)?;
+            elem.encode(inner_ctx.clone(), endian, writer)?;
         }
         Ok(())
     }
@@ -301,12 +311,12 @@ where
     T: Encode<Ctx>,
     Ctx: Clone,
 {
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, inner_ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
         for elem in self {
-            elem.encode(inner_ctx.clone(), writer)?;
+            elem.encode(inner_ctx.clone(), endian, writer)?;
         }
         Ok(())
     }
@@ -317,14 +327,14 @@ where
     T: Decode<Ctx> + Copy + Default,
     Ctx: Clone,
 {
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    fn decode<R>(inner_ctx: Ctx, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
         //TODO: Use MaybeUninit when stabilized with arrays
         let mut arr = [Default::default(); N];
         for slot in &mut arr {
-            *slot = Decode::decode(inner_ctx.clone(), reader)?;
+            *slot = Decode::decode(inner_ctx.clone(), endian, reader)?;
         }
         Ok(arr)
     }
@@ -342,11 +352,11 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
-    fn encode<W>(&self, ctx: (Len, Ctx), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, ctx: (Len, Ctx), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.as_slice().encode(ctx, writer)
+        self.as_slice().encode(ctx, endian, writer)
     }
 }
 
@@ -361,11 +371,11 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
-    fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, ctx: Len, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.as_slice().encode(ctx, writer)
+        self.as_slice().encode(ctx, endian, writer)
     }
 }
 
@@ -377,11 +387,11 @@ where
     /// Encodes each element of the vector in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, ctx: (Ctx,), writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, ctx: (Ctx,), endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.as_slice().encode(ctx, writer)
+        self.as_slice().encode(ctx, endian, writer)
     }
 }
 
@@ -394,13 +404,17 @@ where
     ///
     /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
-    fn decode<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, Error>
+    fn decode<R>(
+        (Len(len), inner_ctx): (Len, Ctx),
+        endian: Endian,
+        reader: &mut R,
+    ) -> Result<Self, Error>
     where
         R: io::Read,
     {
         let mut acc = Self::with_capacity(len);
         for _ in 0..len {
-            acc.push(T::decode(inner_ctx.clone(), reader)?);
+            acc.push(T::decode(inner_ctx.clone(), endian, reader)?);
         }
         Ok(acc)
     }
@@ -414,11 +428,12 @@ where
     ///
     /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
-    fn decode<R>(len: Len, reader: &mut R) -> Result<Self, Error>
+    #[inline]
+    fn decode<R>(len: Len, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        Self::decode((len, ()), reader)
+        Self::decode((len, ()), endian, reader)
     }
 }
 
@@ -427,12 +442,13 @@ where
     T: Encode<Ctx>,
 {
     /// If `Some`, then the inner value is encoded, otherwise, nothing is written.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, inner_ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
         if let Some(inner) = self {
-            inner.encode(inner_ctx, writer)
+            inner.encode(inner_ctx, endian, writer)
         } else {
             Ok(())
         }
@@ -451,11 +467,12 @@ where
     ///
     /// Since serializing a `None` writes nothing, deserialization is also a no-op; just construct
     /// a value of `None`.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    #[inline]
+    fn decode<R>(inner_ctx: Ctx, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        T::decode(inner_ctx, reader).map(Some)
+        T::decode(inner_ctx, endian, reader).map(Some)
     }
 }
 
@@ -464,11 +481,12 @@ where
     T: Encode<Ctx> + ToOwned + ?Sized,
 {
     /// Borrows a value of type `T` and encodes it.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, inner_ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        T::encode(&*self, inner_ctx, writer)
+        T::encode(&*self, inner_ctx, endian, writer)
     }
 }
 
@@ -478,11 +496,12 @@ where
     T::Owned: Decode<Ctx>,
 {
     /// Decodes a value of type `T::Owned`.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    #[inline]
+    fn decode<R>(inner_ctx: Ctx, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        T::Owned::decode(inner_ctx, reader).map(Self::Owned)
+        T::Owned::decode(inner_ctx, endian, reader).map(Self::Owned)
     }
 }
 
@@ -491,11 +510,12 @@ where
     T: Encode<Ctx>,
 {
     /// Encodes the boxed value.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, inner_ctx: Ctx, endian: Endian, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        T::encode(&*self, inner_ctx, writer)
+        T::encode(&*self, inner_ctx, endian, writer)
     }
 }
 
@@ -504,17 +524,19 @@ where
     T: Decode<Ctx>,
 {
     /// Decodes a value of type `T` and boxes it.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    #[inline]
+    fn decode<R>(inner_ctx: Ctx, endian: Endian, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        T::decode(inner_ctx, reader).map(Self::new)
+        T::decode(inner_ctx, endian, reader).map(Self::new)
     }
 }
 
 impl Encode for () {
     /// No-op.
-    fn encode<W>(&self, _: (), _: &mut W) -> Result<(), Error>
+    #[inline]
+    fn encode<W>(&self, _: (), _: Endian, _: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -524,7 +546,9 @@ impl Encode for () {
 
 impl Decode for () {
     /// No-op.
-    fn decode<R>(_: (), _: &mut R) -> Result<Self, Error>
+    ///
+    #[inline]
+    fn decode<R>(_: (), _: Endian, _: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -534,8 +558,9 @@ impl Decode for () {
 
 macro_rules! impl_primitive {
     ($($t:ty)*) => {$(
-        impl Encode<Endian> for $t {
-            fn encode<W>(&self, endian: Endian, writer: &mut W) -> Result<(), Error>
+        impl Encode for $t {
+            #[inline]
+            fn encode<W>(&self, _ctx: (), endian: Endian, writer: &mut W) -> Result<(), Error>
             where
                 W: io::Write,
             {
@@ -548,8 +573,9 @@ macro_rules! impl_primitive {
             }
         }
 
-        impl Decode<Endian> for $t {
-            fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, Error>
+        impl Decode for $t {
+            #[inline]
+            fn decode<R>(_ctx: (), endian: Endian, reader: &mut R) -> Result<Self, Error>
             where
                 R: io::Read,
             {
@@ -570,39 +596,3 @@ impl_primitive! {
 
 // Special case: u8/i8 are single-byte values so they can be encoded/decoded without explicit
 // endianness context.
-
-impl Encode for u8 {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
-    where
-        W: io::Write,
-    {
-        self.encode(Endian::Big, writer)
-    }
-}
-
-impl Decode for u8 {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
-    where
-        R: io::Read,
-    {
-        Self::decode(Endian::Big, reader)
-    }
-}
-
-impl Encode for i8 {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
-    where
-        W: io::Write,
-    {
-        self.encode(Endian::Big, writer)
-    }
-}
-
-impl Decode for i8 {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
-    where
-        R: io::Read,
-    {
-        Self::decode(Endian::Big, reader)
-    }
-}

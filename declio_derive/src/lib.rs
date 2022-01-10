@@ -260,7 +260,7 @@ impl ContainerData {
             impl #impl_generics #crate_path::Encode<#encode_ctx_type> for #ident #ident_generics
                 #where_clause
             {
-                fn encode<W>(&self, #encode_ctx_pat: #encode_ctx_type, #writer_binding: &mut W)
+                fn encode<W>(&self, #encode_ctx_pat: #encode_ctx_type, __endian: #crate_path::ctx::Endian, #writer_binding: &mut W)
                     -> Result<(), #crate_path::Error>
                 where
                     W: #crate_path::export::io::Write,
@@ -297,7 +297,7 @@ impl ContainerData {
 
         let id_decode_expr = match (id_decoder, id_decode_expr) {
             (Some(decoder), None) => quote! {
-                #decoder(#id_decode_ctx, #reader_binding)
+                #decoder(#id_decode_ctx, __endian, #reader_binding)
                     .map_err(|e| #crate_path::Error::with_context("error decoding enum id", e))?
             },
             (None, Some(decode_expr)) => quote!(#decode_expr),
@@ -308,7 +308,7 @@ impl ContainerData {
             impl #impl_generics #crate_path::Decode<#decode_ctx_type> for #ident #ident_generics
                 #where_clause
             {
-                fn decode<R>(#decode_ctx_pat: #decode_ctx_type, #reader_binding: &mut R)
+                fn decode<R>(#decode_ctx_pat: #decode_ctx_type, __endian: #crate_path::ctx::Endian, #reader_binding: &mut R)
                     -> Result<Self, #crate_path::Error>
                 where
                     R: #crate_path::export::io::Read,
@@ -463,7 +463,7 @@ impl VariantData {
         });
         let id_encode_stmt = id_encoder.map(|encoder| {
             quote! {
-                #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)
+                #encoder(&(#id_expr), #id_encode_ctx, __endian, #writer_binding)
                     .map_err(|e| #crate_path::Error::with_context("error encoding enum id", e))?;
             }
         });
@@ -657,7 +657,7 @@ impl FieldData {
         } = self;
         let error_context = format!("error encoding field {}", public_ref_ident);
         let raw_encoder = quote! {
-            #encoder(#public_ref_ident, #encode_ctx, #writer_binding)
+            #encoder(#public_ref_ident, #encode_ctx, __endian, #writer_binding)
                 .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {
@@ -681,7 +681,7 @@ impl FieldData {
         } = self;
         let error_context = format!("error decoding field {}", public_ref_ident);
         let raw_decoder = quote! {
-            #decoder(#decode_ctx, #reader_binding)
+            #decoder(#decode_ctx, __endian, #reader_binding)
                 .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {
