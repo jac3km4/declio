@@ -143,6 +143,7 @@ pub mod util;
 
 pub use self::error::Error;
 
+use core::marker::PhantomData;
 #[doc(hidden)]
 pub use std as export;
 
@@ -553,6 +554,26 @@ impl Decode for () {
         R: io::Read,
     {
         Ok(())
+    }
+}
+
+impl<A> Encode for PhantomData<A> {
+    #[inline]
+    fn encode<W>(&self, _ctx: (), _endian: Endian, _writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        Ok(())
+    }
+}
+
+impl<A> Decode for PhantomData<A> {
+    #[inline]
+    fn decode<R>(_ctx: (), _endian: Endian, _reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        Ok(PhantomData)
     }
 }
 
