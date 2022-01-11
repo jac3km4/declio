@@ -51,7 +51,15 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.message)
+        write!(
+            f,
+            "{} ({})",
+            self.message,
+            self.source
+                .as_ref()
+                .map(|err| format!(" ({})", err))
+                .unwrap_or("".to_owned())
+        )
     }
 }
 
