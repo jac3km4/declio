@@ -12,11 +12,11 @@ macro_rules! endian_wrappers {
         #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name<T>(pub T);
 
-        impl<T> Encode<()> for $name<T>
+        impl<T, C> Encode<C> for $name<T>
         where
             T: Encode<Endian>,
         {
-            fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+            fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
             where
                 W: std::io::Write,
             {
@@ -24,11 +24,11 @@ macro_rules! endian_wrappers {
             }
         }
 
-        impl<T> Decode<()> for $name<T>
+        impl<T, C> Decode<C> for $name<T>
         where
             T: Decode<Endian>,
         {
-            fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+            fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
             where
                 R: std::io::Read,
             {
@@ -276,7 +276,7 @@ pub mod zero_one {
     use crate::{Decode, Encode, Error};
 
     #[allow(missing_docs)]
-    pub fn encode<W>(b: &bool, _ctx: (), writer: &mut W) -> Result<(), Error>
+    pub fn encode<W, C>(b: &bool, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
@@ -288,7 +288,7 @@ pub mod zero_one {
     }
 
     #[allow(missing_docs)]
-    pub fn decode<R>(_ctx: (), reader: &mut R) -> Result<bool, Error>
+    pub fn decode<R, C>(_ctx: C, reader: &mut R) -> Result<bool, Error>
     where
         R: std::io::Read,
     {
@@ -328,8 +328,8 @@ pub mod zero_one {
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ZeroOne(pub bool);
 
-impl Encode<()> for ZeroOne {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+impl<C> Encode<C> for ZeroOne {
+    fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
@@ -337,8 +337,8 @@ impl Encode<()> for ZeroOne {
     }
 }
 
-impl Decode<()> for ZeroOne {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+impl<C> Decode<C> for ZeroOne {
+    fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
     where
         R: std::io::Read,
     {

@@ -1,8 +1,11 @@
 use darling::{ast, Error, FromDeriveInput, FromField, FromMeta, FromVariant};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
+use syn::parse::{Parse, Parser};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, parse_quote, DeriveInput, Token};
+use syn::{
+    parse_macro_input, parse_quote, DeriveInput, GenericParam, Token, WhereClause, WherePredicate,
+};
 
 #[proc_macro_derive(Encode, attributes(declio))]
 pub fn derive_encode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -38,6 +41,9 @@ struct ContainerReceiver {
     ctx: Asym<syn::LitStr>,
 
     #[darling(default)]
+    ctx_is: Asym<syn::LitStr>,
+
+    #[darling(default)]
     id_expr: Asym<syn::LitStr>,
 
     #[darling(default)]
@@ -51,10 +57,12 @@ struct ContainerData {
     ident: syn::Ident,
     generics: syn::Generics,
     crate_path: syn::Path,
-    encode_ctx_pat: TokenStream,
-    decode_ctx_pat: TokenStream,
-    encode_ctx_type: TokenStream,
-    decode_ctx_type: TokenStream,
+    encode_ctx_is: Option<TokenStream>,
+    decode_ctx_is: Option<TokenStream>,
+    encode_ctx_pat: Option<TokenStream>,
+    decode_ctx_pat: Option<TokenStream>,
+    encode_ctx_type: Option<TokenStream>,
+    decode_ctx_type: Option<TokenStream>,
     id_encode_ctx: TokenStream,
     id_decode_ctx: TokenStream,
     id_encoder: Option<TokenStream>,
@@ -76,7 +84,7 @@ impl ContainerReceiver {
             .unwrap_or_else(|| parse_quote!(declio));
 
         let mut parse_ctx = |arg: Option<&syn::LitStr>| match arg {
-            None => (quote!(_), quote!(())),
+            None => (None, None),
             Some(lit) => {
                 let parts: Punctuated<syn::FnArg, Token![,]> =
                     match lit.parse_with(Punctuated::parse_terminated) {
@@ -106,15 +114,38 @@ impl ContainerReceiver {
 
                 // Special case: single context variable gets to be not-a-tuple.
                 if parts.len() == 1 {
-                    (quote!( #( #pats )* ), quote!( #( #types )* ))
+                    (Some(quote!( #( #pats )* )), Some(quote!( #( #types )* )))
                 } else {
-                    (quote!( ( #( #pats , )* ) ), quote!( ( #( #types , )* ) ))
+                    (
+                        Some(quote!( ( #( #pats , )* ) )),
+                        Some(quote!( ( #( #types , )* ) )),
+                    )
                 }
             }
         };
 
         let (encode_ctx_pat, encode_ctx_type) = parse_ctx(self.ctx.encode());
         let (decode_ctx_pat, decode_ctx_type) = parse_ctx(self.ctx.decode());
+        let encode_ctx_is = self
+            .ctx_is
+            .encode()
+            .map(|a| match a.parse::<TokenStream>() {
+                Ok(res) => res,
+                Err(err) => {
+                    errors.push(from_syn_error(err));
+                    quote!(unreachable!("compile error"))
+                }
+            });
+        let decode_ctx_is = self
+            .ctx_is
+            .decode()
+            .map(|a| match a.parse::<TokenStream>() {
+                Ok(res) => res,
+                Err(err) => {
+                    errors.push(from_syn_error(err));
+                    quote!(unreachable!("compile error"))
+                }
+            });
 
         let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr.decode(), &self.id_type)
         {
@@ -215,6 +246,8 @@ impl ContainerReceiver {
                 ident,
                 generics,
                 crate_path,
+                encode_ctx_is,
+                decode_ctx_is,
                 encode_ctx_pat,
                 decode_ctx_pat,
                 encode_ctx_type,
@@ -238,11 +271,38 @@ impl ContainerData {
         let Self {
             ident,
             crate_path,
+            encode_ctx_is,
             encode_ctx_pat,
             encode_ctx_type,
             ..
         } = self;
-        let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
+
+        let (impl_generics, encode_ctx_pat, encode_ctx_type, where_clause) = match encode_ctx_type {
+            Some(typ) => (
+                self.generics.clone(),
+                encode_ctx_pat.clone().unwrap(),
+                typ.clone(),
+                self.generics.where_clause.clone(),
+            ),
+            None => {
+                let mut copy = self.generics.clone();
+                let param_ty = quote!(Ctx);
+                let param_name = quote!(ctx);
+                let param = GenericParam::parse.parse2(param_ty.clone()).unwrap();
+                copy.params.push(param);
+                let mut wher = copy
+                    .where_clause
+                    .clone()
+                    .unwrap_or(WhereClause::parse.parse2(quote! {where}).unwrap());
+                wher.predicates.push(
+                    WherePredicate::parse
+                        .parse2(quote! { #param_ty: Copy })
+                        .unwrap(),
+                );
+                (copy, param_name, param_ty, Some(wher))
+            }
+        };
+        let (_, ident_generics, _) = self.generics.split_for_impl();
         let writer_binding = quote!(__declio_writer);
 
         let variant_arm = self.variants.iter().map(|variant| {
@@ -251,6 +311,8 @@ impl ContainerData {
                 &self.id_encode_ctx,
                 self.id_check_expr.as_ref(),
                 &self.crate_path,
+                encode_ctx_is.as_ref(),
+                &encode_ctx_pat,
                 &writer_binding,
             )
         });
@@ -277,6 +339,7 @@ impl ContainerData {
         let Self {
             ident,
             crate_path,
+            decode_ctx_is,
             decode_ctx_pat,
             decode_ctx_type,
             ..
@@ -287,13 +350,42 @@ impl ContainerData {
             id_decode_expr,
             ..
         } = self;
-        let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
+        let (impl_generics, decode_ctx_pat, decode_ctx_type, where_clause) = match decode_ctx_type {
+            Some(typ) => (
+                self.generics.clone(),
+                decode_ctx_pat.clone().unwrap(),
+                typ.clone(),
+                self.generics.where_clause.clone(),
+            ),
+            None => {
+                let mut copy = self.generics.clone();
+                let param_ty = quote!(Ctx);
+                let param_name = quote!(ctx);
+                let param = GenericParam::parse.parse2(param_ty.clone()).unwrap();
+                copy.params.push(param);
+                let mut wher = copy
+                    .where_clause
+                    .clone()
+                    .unwrap_or(WhereClause::parse.parse2(quote! {where}).unwrap());
+                wher.predicates.push(
+                    WherePredicate::parse
+                        .parse2(quote! { #param_ty: Copy })
+                        .unwrap(),
+                );
+                (copy, param_name, param_ty, Some(wher))
+            }
+        };
+        let (_, ident_generics, _) = self.generics.split_for_impl();
         let reader_binding: TokenStream = quote!(__declio_reader);
 
-        let variant_arm = self
-            .variants
-            .iter()
-            .map(|variant| variant.decode_arm(&self.crate_path, &reader_binding));
+        let variant_arm = self.variants.iter().map(|variant| {
+            variant.decode_arm(
+                &self.crate_path,
+                decode_ctx_is.as_ref(),
+                &decode_ctx_pat,
+                &reader_binding,
+            )
+        });
 
         let id_decode_expr = match (id_decoder, id_decode_expr) {
             (Some(decoder), None) => quote! {
@@ -428,6 +520,8 @@ impl VariantData {
         id_encode_ctx: &TokenStream,
         id_check_expr: Option<&TokenStream>,
         crate_path: &syn::Path,
+        encode_ctx_is: Option<&TokenStream>,
+        encode_ctx_pat: &TokenStream,
         writer_binding: &TokenStream,
     ) -> TokenStream {
         let Self { id_expr, .. } = self;
@@ -468,10 +562,9 @@ impl VariantData {
             }
         });
 
-        let field_encode_expr = self
-            .fields
-            .iter()
-            .map(|field| field.encode_expr(crate_path, writer_binding));
+        let field_encode_expr = self.fields.iter().map(|field| {
+            field.encode_expr(crate_path, encode_ctx_is, encode_ctx_pat, writer_binding)
+        });
 
         quote! {
             #path #pat_fields => {
@@ -483,15 +576,20 @@ impl VariantData {
         }
     }
 
-    fn decode_arm(&self, crate_path: &syn::Path, reader_binding: &TokenStream) -> TokenStream {
+    fn decode_arm(
+        &self,
+        crate_path: &syn::Path,
+        decode_ctx_is: Option<&TokenStream>,
+        decode_ctx_pat: &TokenStream,
+        reader_binding: &TokenStream,
+    ) -> TokenStream {
         let Self { id_pat, .. } = self;
 
         let private_owned_ident = self.fields.iter().map(|field| &field.private_owned_ident);
         let public_ref_ident = self.fields.iter().map(|field| &field.public_ref_ident);
-        let field_decode_expr = self
-            .fields
-            .iter()
-            .map(|field| field.decode_expr(crate_path, reader_binding));
+        let field_decode_expr = self.fields.iter().map(|field| {
+            field.decode_expr(crate_path, decode_ctx_is, decode_ctx_pat, reader_binding)
+        });
 
         let path = match &self.ident {
             Some(ident) => quote!(Self::#ident),
@@ -554,8 +652,8 @@ struct FieldData {
     stored_ident: Option<syn::Ident>,
     public_ref_ident: syn::Ident,
     private_owned_ident: syn::Ident,
-    encode_ctx: TokenStream,
-    decode_ctx: TokenStream,
+    encode_ctx: Option<TokenStream>,
+    decode_ctx: Option<TokenStream>,
     encoder: TokenStream,
     decoder: TokenStream,
     skip_if: Option<TokenStream>,
@@ -575,24 +673,24 @@ impl FieldReceiver {
 
         let encode_ctx = match self.ctx.encode() {
             Some(lit) => match lit.parse() {
-                Ok(expr) => expr,
+                Ok(expr) => Some(expr),
                 Err(err) => {
                     errors.push(from_syn_error(err));
-                    quote!(unreachable!("compile error"))
+                    Some(quote!(unreachable!("compile error")))
                 }
             },
-            None => quote!(()),
+            None => None,
         };
 
         let decode_ctx = match self.ctx.decode() {
             Some(lit) => match lit.parse() {
-                Ok(expr) => expr,
+                Ok(expr) => Some(expr),
                 Err(err) => {
                     errors.push(from_syn_error(err));
-                    quote!(unreachable!("compile error"))
+                    Some(quote!(unreachable!("compile error")))
                 }
             },
-            None => quote!(()),
+            None => None,
         };
 
         let encoder = match (&self.encode_with, &self.with) {
@@ -648,7 +746,13 @@ impl FieldReceiver {
 }
 
 impl FieldData {
-    fn encode_expr(&self, crate_path: &syn::Path, writer_binding: &TokenStream) -> TokenStream {
+    fn encode_expr(
+        &self,
+        crate_path: &syn::Path,
+        encode_ctx_is: Option<&TokenStream>,
+        encode_ctx_pat: &TokenStream,
+        writer_binding: &TokenStream,
+    ) -> TokenStream {
         let Self {
             public_ref_ident,
             encoder,
@@ -656,8 +760,12 @@ impl FieldData {
             ..
         } = self;
         let error_context = format!("error encoding field {}", public_ref_ident);
+        let actual_ctx = encode_ctx
+            .as_ref()
+            .or(encode_ctx_is)
+            .unwrap_or(encode_ctx_pat);
         let raw_encoder = quote! {
-            #encoder(#public_ref_ident, #encode_ctx, #writer_binding)
+            #encoder(#public_ref_ident, #actual_ctx, #writer_binding)
                 .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {
@@ -672,7 +780,13 @@ impl FieldData {
         }
     }
 
-    fn decode_expr(&self, crate_path: &syn::Path, reader_binding: &TokenStream) -> TokenStream {
+    fn decode_expr(
+        &self,
+        crate_path: &syn::Path,
+        decode_ctx_is: Option<&TokenStream>,
+        decode_ctx_pat: &TokenStream,
+        reader_binding: &TokenStream,
+    ) -> TokenStream {
         let Self {
             public_ref_ident,
             decode_ctx,
@@ -680,8 +794,12 @@ impl FieldData {
             ..
         } = self;
         let error_context = format!("error decoding field {}", public_ref_ident);
+        let actual_ctx = decode_ctx
+            .as_ref()
+            .or(decode_ctx_is)
+            .unwrap_or(decode_ctx_pat);
         let raw_decoder = quote! {
-            #decoder(#decode_ctx, #reader_binding)
+            #decoder(#actual_ctx, #reader_binding)
                 .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {

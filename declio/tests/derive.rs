@@ -1,5 +1,6 @@
+use declio::ctx::Endian;
 use declio::util::BigEndian;
-use declio::{ctx, Decode, Encode};
+use declio::{ctx, to_bytes_with_context, Decode, Encode};
 use std::fmt::Debug;
 use std::io;
 
@@ -42,10 +43,18 @@ struct WithSeparate {
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
+#[declio(ctx_is = "ctx::Endian::Little")]
 struct FieldCtx {
-    #[declio(ctx = "ctx::Endian::Little")]
-    y: u32,
+    x: u32,
+    #[declio(ctx = "(ctx::Len(1), ctx::Endian::Little)")]
+    y: Vec<u32>,
 }
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct FieldCtx2 {
+    a: FieldCtx
+}
+
 
 #[derive(Debug, PartialEq, Encode, Decode)]
 #[declio(ctx = "endian: ctx::Endian")]
@@ -80,14 +89,14 @@ struct SkipIf {
 mod little_endian {
     use super::*;
 
-    pub fn encode<W>(x: &u32, _: (), writer: &mut W) -> Result<(), declio::Error>
+    pub fn encode<W, C>(x: &u32, _: C, writer: &mut W) -> Result<(), declio::Error>
     where
         W: io::Write,
     {
         x.encode(ctx::Endian::Little, writer)
     }
 
-    pub fn decode<R>(_: (), reader: &mut R) -> Result<u32, declio::Error>
+    pub fn decode<R, C>(_: C, reader: &mut R) -> Result<u32, declio::Error>
     where
         R: io::Read,
     {
@@ -113,7 +122,7 @@ where
 
 fn test_bidir<T>(val: T, bytes: &[u8])
 where
-    T: Encode + Decode + Debug + PartialEq,
+    T: Encode<()> + Decode<()> + Debug + PartialEq,
 {
     test_bidir_ctx(val, bytes, ());
 }
@@ -187,7 +196,15 @@ fn with_separate() {
 
 #[test]
 fn field_ctx() {
-    test_bidir(FieldCtx { y: 0xdeadbeef }, &[0xef, 0xbe, 0xad, 0xde]);
+    let r = to_bytes_with_context(
+        FieldCtx {
+            x: 1,
+            y: vec![0xdeadbeef],
+        },
+        (1, Endian::Little),
+    )
+    .unwrap();
+    assert_eq!(r, vec![0x1, 0x0, 0x0, 0x0, 0xef, 0xbe, 0xad, 0xde])
 }
 
 #[test]

@@ -162,7 +162,7 @@ use std::{io, mem};
 /// Encodes a value into a vector of bytes.
 pub fn to_bytes<T>(value: T) -> Result<Vec<u8>, Error>
 where
-    T: Encode,
+    T: Encode<()>,
 {
     to_bytes_with_context(value, ())
 }
@@ -183,7 +183,7 @@ where
 /// will return an error.
 pub fn from_bytes<T>(bytes: &[u8]) -> Result<T, Error>
 where
-    T: Decode,
+    T: Decode<()>,
 {
     from_bytes_with_context(bytes, ())
 }
@@ -260,7 +260,7 @@ where
 
 impl<T> Encode<Len> for [T]
 where
-    T: Encode,
+    T: Encode<()>,
 {
     /// Encodes each element of the vector in order.
     ///
@@ -352,7 +352,7 @@ where
 
 impl<T> Encode<Len> for Vec<T>
 where
-    T: Encode,
+    T: Encode<()>,
 {
     /// Encodes each element of the vector in order.
     ///
@@ -408,7 +408,7 @@ where
 
 impl<T> Decode<Len> for Vec<T>
 where
-    T: Decode,
+    T: Decode<()>,
 {
     /// Decodes multiple values of type `T`, collecting them in a `Vec`.
     ///
@@ -512,9 +512,9 @@ where
     }
 }
 
-impl Encode for () {
+impl<C> Encode<C> for () {
     /// No-op.
-    fn encode<W>(&self, _: (), _: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, _: C, _: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -522,9 +522,9 @@ impl Encode for () {
     }
 }
 
-impl Decode for () {
+impl<C> Decode<C> for () {
     /// No-op.
-    fn decode<R>(_: (), _: &mut R) -> Result<Self, Error>
+    fn decode<R>(_: C, _: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -534,12 +534,13 @@ impl Decode for () {
 
 macro_rules! impl_primitive {
     ($($t:ty)*) => {$(
-        impl Encode<Endian> for $t {
-            fn encode<W>(&self, endian: Endian, writer: &mut W) -> Result<(), Error>
+        impl <C: HasEndianess> Encode<C> for $t {
+            #[inline]
+            fn encode<W>(&self, ctx: C, writer: &mut W) -> Result<(), Error>
             where
                 W: io::Write,
             {
-                let bytes = match endian {
+                let bytes = match ctx.endianess() {
                     Endian::Big => self.to_be_bytes(),
                     Endian::Little => self.to_le_bytes(),
                 };
@@ -548,14 +549,15 @@ macro_rules! impl_primitive {
             }
         }
 
-        impl Decode<Endian> for $t {
-            fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, Error>
+        impl <C: HasEndianess> Decode<C> for $t {
+            #[inline]
+            fn decode<R>(ctx: C, reader: &mut R) -> Result<Self, Error>
             where
                 R: io::Read,
             {
                 let mut bytes = [0u8; mem::size_of::<$t>()];
                 reader.read_exact(&mut bytes)?;
-                match endian {
+                match ctx.endianess() {
                     Endian::Big => Ok(Self::from_be_bytes(bytes)),
                     Endian::Little => Ok(Self::from_le_bytes(bytes)),
                 }
@@ -564,45 +566,76 @@ macro_rules! impl_primitive {
     )*}
 }
 
+pub trait HasEndianess {
+    fn endianess(&self) -> Endian;
+}
+
+impl HasEndianess for Endian {
+    #[inline]
+    fn endianess(&self) -> Endian {
+        *self
+    }
+}
+
+impl<A> HasEndianess for (A, Endian) {
+    #[inline]
+    fn endianess(&self) -> Endian {
+        self.1
+    }
+}
+
+impl<A, B> HasEndianess for (A, B, Endian) {
+    #[inline]
+    fn endianess(&self) -> Endian {
+        self.2
+    }
+}
+
 impl_primitive! {
-    u8 u16 u32 u64 u128 i8 i16 i32 i64 i128 f32 f64
+    u16 u32 u64 u128 i16 i32 i64 i128 f32 f64
 }
 
 // Special case: u8/i8 are single-byte values so they can be encoded/decoded without explicit
 // endianness context.
 
-impl Encode for u8 {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+impl<C> Encode<C> for u8 {
+    fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.encode(Endian::Big, writer)
+        writer.write_all(&self.to_ne_bytes())?;
+        Ok(())
     }
 }
 
-impl Decode for u8 {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+impl<C> Decode<C> for u8 {
+    fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        Self::decode(Endian::Big, reader)
+        let mut bytes = [0u8];
+        reader.read_exact(&mut bytes)?;
+        Ok(u8::from_ne_bytes(bytes))
     }
 }
 
-impl Encode for i8 {
-    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+impl<C> Encode<C> for i8 {
+    fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.encode(Endian::Big, writer)
+        writer.write_all(&self.to_ne_bytes())?;
+        Ok(())
     }
 }
 
-impl Decode for i8 {
-    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+impl<C> Decode<C> for i8 {
+    fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
-        Self::decode(Endian::Big, reader)
+        let mut bytes = [0u8];
+        reader.read_exact(&mut bytes)?;
+        Ok(i8::from_ne_bytes(bytes))
     }
 }

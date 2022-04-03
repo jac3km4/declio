@@ -29,8 +29,8 @@ macro_rules! magic_bytes {
         $(#[$attr])*
         $vis struct $name;
 
-        impl $crate::Encode<()> for $name {
-            fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), $crate::Error>
+        impl <C>$crate::Encode<C> for $name {
+            fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), $crate::Error>
             where
                 W: std::io::Write,
             {
@@ -38,8 +38,8 @@ macro_rules! magic_bytes {
             }
         }
 
-        impl $crate::Decode<()> for $name {
-            fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, $crate::Error>
+        impl <C> $crate::Decode<C> for $name {
+            fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, $crate::Error>
             where
                 R: std::io::Read,
             {
