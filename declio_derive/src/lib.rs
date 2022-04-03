@@ -407,7 +407,7 @@ impl ContainerData {
                 {
                     match #id_decode_expr {
                         #( #variant_arm )*
-                        _ => Err(#crate_path::Error::new("unknown id value")),
+                        other => Err(#crate_path::Error::new(format!("unknown id value: {:?}", other))),
                     }
                 }
             }
