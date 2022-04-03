@@ -224,6 +224,7 @@ impl<T, Ctx> Encode<Ctx> for &T
 where
     T: Encode<Ctx>,
 {
+    #[inline]
     fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -244,6 +245,7 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
+    #[inline]
     fn encode<W>(&self, (Len(len), inner_ctx): (Len, Ctx), writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -269,6 +271,7 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
+    #[inline]
     fn encode<W>(&self, len: Len, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -342,6 +345,7 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
+    #[inline]
     fn encode<W>(&self, ctx: (Len, Ctx), writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -361,6 +365,7 @@ where
     /// The length context is provided as a sanity check to protect against logic errors; if the
     /// provided length context is not equal to the vector's length, then this function will return
     /// an error.
+    #[inline]
     fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -377,6 +382,7 @@ where
     /// Encodes each element of the vector in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
+    #[inline]
     fn encode<W>(&self, ctx: (Ctx,), writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -414,6 +420,7 @@ where
     ///
     /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
+    #[inline]
     fn decode<R>(len: Len, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -427,6 +434,7 @@ where
     T: Encode<Ctx>,
 {
     /// If `Some`, then the inner value is encoded, otherwise, nothing is written.
+    #[inline]
     fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -451,6 +459,7 @@ where
     ///
     /// Since serializing a `None` writes nothing, deserialization is also a no-op; just construct
     /// a value of `None`.
+    #[inline]
     fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -464,6 +473,7 @@ where
     T: Encode<Ctx> + ToOwned + ?Sized,
 {
     /// Borrows a value of type `T` and encodes it.
+    #[inline]
     fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -478,6 +488,7 @@ where
     T::Owned: Decode<Ctx>,
 {
     /// Decodes a value of type `T::Owned`.
+    #[inline]
     fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -491,6 +502,7 @@ where
     T: Encode<Ctx>,
 {
     /// Encodes the boxed value.
+    #[inline]
     fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -504,6 +516,7 @@ where
     T: Decode<Ctx>,
 {
     /// Decodes a value of type `T` and boxes it.
+    #[inline]
     fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -514,6 +527,7 @@ where
 
 impl<C> Encode<C> for () {
     /// No-op.
+    #[inline]
     fn encode<W>(&self, _: C, _: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -524,6 +538,7 @@ impl<C> Encode<C> for () {
 
 impl<C> Decode<C> for () {
     /// No-op.
+    #[inline]
     fn decode<R>(_: C, _: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -599,6 +614,7 @@ impl_primitive! {
 // endianness context.
 
 impl<C> Encode<C> for u8 {
+    #[inline]
     fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -609,6 +625,7 @@ impl<C> Encode<C> for u8 {
 }
 
 impl<C> Decode<C> for u8 {
+    #[inline]
     fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
@@ -620,6 +637,7 @@ impl<C> Decode<C> for u8 {
 }
 
 impl<C> Encode<C> for i8 {
+    #[inline]
     fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
@@ -630,6 +648,7 @@ impl<C> Encode<C> for i8 {
 }
 
 impl<C> Decode<C> for i8 {
+    #[inline]
     fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,

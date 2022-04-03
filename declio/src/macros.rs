@@ -30,6 +30,7 @@ macro_rules! magic_bytes {
         $vis struct $name;
 
         impl <C>$crate::Encode<C> for $name {
+            #[inline]
             fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), $crate::Error>
             where
                 W: std::io::Write,
@@ -39,6 +40,7 @@ macro_rules! magic_bytes {
         }
 
         impl <C> $crate::Decode<C> for $name {
+            #[inline]
             fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, $crate::Error>
             where
                 R: std::io::Read,
