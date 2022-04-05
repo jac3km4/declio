@@ -1,7 +1,10 @@
 //! Utilities that aren't part of the "core" of declio, but may be useful in reducing boilerplate.
 
+use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+
 use crate::ctx::{Endian, Len};
-use crate::{Decode, Encode, Error};
+use crate::{Decode, Encode, Error, HasEndianess};
 
 #[doc(inline)]
 pub use crate::magic_bytes;
@@ -355,5 +358,85 @@ impl From<bool> for ZeroOne {
 impl From<ZeroOne> for bool {
     fn from(wrapper: ZeroOne) -> Self {
         wrapper.0
+    }
+}
+
+#[derive(Debug)]
+pub struct NoPrefix;
+
+#[derive(Debug, Clone)]
+pub struct Bytes<P = NoPrefix>(Vec<u8>, PhantomData<P>);
+
+impl<P> Bytes<P> {
+    #[inline]
+    pub const fn new(vec: Vec<u8>) -> Self {
+        Self(vec, PhantomData)
+    }
+
+    #[inline]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    #[inline]
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl<C> Encode<C> for Bytes {
+    #[inline]
+    fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
+    where
+        W: std::io::Write,
+    {
+        writer.write_all(&self.0)?;
+        Ok(())
+    }
+}
+
+impl Decode<Len> for Bytes {
+    #[inline]
+    fn decode<R>(len: Len, reader: &mut R) -> Result<Self, Error>
+    where
+        R: std::io::Read,
+    {
+        let mut buf = vec![0; len.0];
+        reader.read_exact(&mut buf)?;
+        Ok(Self::new(buf))
+    }
+}
+
+impl<P, C> Encode<C> for Bytes<P>
+where
+    P: Encode<C> + TryFrom<usize>,
+    P::Error: std::error::Error,
+{
+    fn encode<W>(&self, ctx: C, writer: &mut W) -> Result<(), Error>
+    where
+        W: std::io::Write,
+    {
+        let size: P = self.0.len().try_into().map_err(|err| Error::new(err))?;
+        size.encode(ctx, writer)?;
+        writer.write_all(&self.0)?;
+        Ok(())
+    }
+}
+
+impl<P, C> Decode<C> for Bytes<P>
+where
+    P: Decode<C> + TryInto<usize>,
+    P::Error: std::error::Error,
+{
+    fn decode<R>(ctx: C, reader: &mut R) -> Result<Self, Error>
+    where
+        R: std::io::Read,
+    {
+        let size = P::decode(ctx, reader)?
+            .try_into()
+            .map_err(|err| Error::new(err))?;
+        let mut buf = vec![0; size];
+        reader.read_exact(&mut buf)?;
+        Ok(Self::new(buf))
     }
 }

@@ -144,6 +144,7 @@ pub mod util;
 
 pub use self::error::Error;
 
+use core::marker::PhantomData;
 #[doc(hidden)]
 pub use std as export;
 
@@ -656,5 +657,25 @@ impl<C> Decode<C> for i8 {
         let mut bytes = [0u8];
         reader.read_exact(&mut bytes)?;
         Ok(i8::from_ne_bytes(bytes))
+    }
+}
+
+impl<C, A> Encode<C> for PhantomData<A> {
+    #[inline]
+    fn encode<W>(&self, _ctx: C, _writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        Ok(())
+    }
+}
+
+impl<C, A> Decode<C> for PhantomData<A> {
+    #[inline]
+    fn decode<R>(_ctx: C, _reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        Ok(PhantomData)
     }
 }
