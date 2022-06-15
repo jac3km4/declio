@@ -1,10 +1,9 @@
 //! Utilities that aren't part of the "core" of declio, but may be useful in reducing boilerplate.
 
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
 
 use crate::ctx::{Endian, Len};
-use crate::{Decode, Encode, Error, HasEndianess};
+use crate::{Decode, Encode, EncodedSize, Error};
 
 #[doc(inline)]
 pub use crate::magic_bytes;
@@ -36,6 +35,16 @@ macro_rules! endian_wrappers {
                 R: std::io::Read,
             {
                 T::decode($endian, reader).map(Self)
+            }
+        }
+
+        impl<T, Ctx> EncodedSize<Ctx> for $name<T>
+        where
+            T: EncodedSize<Ctx>
+        {
+            #[inline]
+            fn encoded_size(&self, ctx: Ctx) -> usize {
+                self.0.encoded_size(ctx)
             }
         }
 
@@ -164,6 +173,15 @@ pub mod utf8 {
         let string = String::from_utf8(bytes)?;
         Ok(string)
     }
+
+    #[allow(missing_docs)]
+    #[inline]
+    pub fn encoded_size<S, Ctx>(str: S, _ctx: Ctx) -> usize
+    where
+        S: AsRef<str>,
+    {
+        str.as_ref().len()
+    }
 }
 
 /// UTF-8 wrapper type for strings.
@@ -229,6 +247,13 @@ impl Decode<Len> for Utf8 {
         R: std::io::Read,
     {
         utf8::decode(ctx, reader).map(Self)
+    }
+}
+
+impl<Ctx> EncodedSize<Ctx> for Utf8 {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        self.0.len()
     }
 }
 
@@ -305,6 +330,12 @@ pub mod zero_one {
             ))),
         }
     }
+
+    #[allow(missing_docs)]
+    #[inline]
+    pub fn encoded_size<Ctx>(_b: &bool, _ctx: Ctx) -> usize {
+        1
+    }
 }
 
 /// Zero-one wrapper type for booleans.
@@ -349,6 +380,13 @@ impl<C> Decode<C> for ZeroOne {
     }
 }
 
+impl<Ctx> EncodedSize<Ctx> for ZeroOne {
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        zero_one::encoded_size(&self.0, ctx)
+    }
+}
+
 impl From<bool> for ZeroOne {
     fn from(value: bool) -> Self {
         Self(value)
@@ -361,8 +399,15 @@ impl From<ZeroOne> for bool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NoPrefix;
+
+impl<Ctx> EncodedSize<Ctx> for NoPrefix {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        0
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Bytes<P = NoPrefix>(Vec<u8>, PhantomData<P>);
@@ -374,7 +419,7 @@ impl<P> Bytes<P> {
     }
 
     #[inline]
-    pub fn bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
@@ -416,7 +461,7 @@ where
     where
         W: std::io::Write,
     {
-        let size: P = self.0.len().try_into().map_err(|err| Error::new(err))?;
+        let size: P = self.0.len().try_into().map_err(Error::new)?;
         size.encode(ctx, writer)?;
         writer.write_all(&self.0)?;
         Ok(())
@@ -432,11 +477,19 @@ where
     where
         R: std::io::Read,
     {
-        let size = P::decode(ctx, reader)?
-            .try_into()
-            .map_err(|err| Error::new(err))?;
+        let size = P::decode(ctx, reader)?.try_into().map_err(Error::new)?;
         let mut buf = vec![0; size];
         reader.read_exact(&mut buf)?;
         Ok(Self::new(buf))
+    }
+}
+
+impl<P, Ctx> EncodedSize<Ctx> for Bytes<P>
+where
+    P: EncodedSize<Ctx> + Default,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        P::default_encoded_size(ctx) + self.0.len()
     }
 }

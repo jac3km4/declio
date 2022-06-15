@@ -221,6 +221,18 @@ pub trait Decode<Ctx = ()>: Sized {
         R: io::Read;
 }
 
+pub trait EncodedSize<Ctx = ()> {
+    fn encoded_size(&self, ctx: Ctx) -> usize;
+
+    #[inline]
+    fn default_encoded_size(ctx: Ctx) -> usize
+    where
+        Self: Default,
+    {
+        Self::default().encoded_size(ctx)
+    }
+}
+
 impl<T, Ctx> Encode<Ctx> for &T
 where
     T: Encode<Ctx>,
@@ -300,6 +312,16 @@ where
     }
 }
 
+impl<T, Ctx> EncodedSize<Ctx> for [T]
+where
+    T: EncodedSize<Ctx>,
+    Ctx: Clone,
+{
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        self.iter().map(|el| T::encoded_size(el, ctx.clone())).sum()
+    }
+}
+
 impl<T, Ctx, const N: usize> Encode<Ctx> for [T; N]
 where
     T: Encode<Ctx>,
@@ -331,6 +353,17 @@ where
             *slot = Decode::decode(inner_ctx.clone(), reader)?;
         }
         Ok(arr)
+    }
+}
+
+impl<T, Ctx, const N: usize> EncodedSize<Ctx> for [T; N]
+where
+    T: EncodedSize<Ctx>,
+    Ctx: Clone,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        self.as_slice().encoded_size(ctx)
     }
 }
 
@@ -430,6 +463,17 @@ where
     }
 }
 
+impl<T, Ctx> EncodedSize<Ctx> for Vec<T>
+where
+    T: EncodedSize<Ctx>,
+    Ctx: Clone,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        self.as_slice().encoded_size(ctx)
+    }
+}
+
 impl<T, Ctx> Encode<Ctx> for Option<T>
 where
     T: Encode<Ctx>,
@@ -469,6 +513,19 @@ where
     }
 }
 
+impl<T, Ctx> EncodedSize<Ctx> for Option<T>
+where
+    T: EncodedSize<Ctx>,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        match self {
+            Some(val) => val.encoded_size(ctx),
+            None => 0,
+        }
+    }
+}
+
 impl<'a, T, Ctx> Encode<Ctx> for Cow<'a, T>
 where
     T: Encode<Ctx> + ToOwned + ?Sized,
@@ -479,7 +536,7 @@ where
     where
         W: io::Write,
     {
-        T::encode(&*self, inner_ctx, writer)
+        T::encode(self, inner_ctx, writer)
     }
 }
 
@@ -498,6 +555,16 @@ where
     }
 }
 
+impl<'a, T, Ctx> EncodedSize<Ctx> for Cow<'a, T>
+where
+    T: EncodedSize<Ctx> + Clone,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        self.as_ref().encoded_size(ctx)
+    }
+}
+
 impl<T, Ctx> Encode<Ctx> for Box<T>
 where
     T: Encode<Ctx>,
@@ -508,7 +575,7 @@ where
     where
         W: io::Write,
     {
-        T::encode(&*self, inner_ctx, writer)
+        T::encode(self, inner_ctx, writer)
     }
 }
 
@@ -523,6 +590,16 @@ where
         R: io::Read,
     {
         T::decode(inner_ctx, reader).map(Self::new)
+    }
+}
+
+impl<T, Ctx> EncodedSize<Ctx> for Box<T>
+where
+    T: EncodedSize<Ctx>,
+{
+    #[inline]
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        self.as_ref().encoded_size(ctx)
     }
 }
 
@@ -545,6 +622,13 @@ impl<C> Decode<C> for () {
         R: io::Read,
     {
         Ok(())
+    }
+}
+
+impl<Ctx> EncodedSize<Ctx> for () {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        0
     }
 }
 
@@ -577,6 +661,13 @@ macro_rules! impl_primitive {
                     Endian::Big => Ok(Self::from_be_bytes(bytes)),
                     Endian::Little => Ok(Self::from_le_bytes(bytes)),
                 }
+            }
+        }
+
+        impl<Ctx> EncodedSize<Ctx> for $t {
+            #[inline]
+            fn encoded_size(&self, _ctx: Ctx) -> usize {
+                std::mem::size_of::<$t>()
             }
         }
     )*}
@@ -637,6 +728,13 @@ impl<C> Decode<C> for u8 {
     }
 }
 
+impl<Ctx> EncodedSize<Ctx> for u8 {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        1
+    }
+}
+
 impl<C> Encode<C> for i8 {
     #[inline]
     fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
@@ -660,6 +758,13 @@ impl<C> Decode<C> for i8 {
     }
 }
 
+impl<Ctx> EncodedSize<Ctx> for i8 {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        1
+    }
+}
+
 impl<C, A> Encode<C> for PhantomData<A> {
     #[inline]
     fn encode<W>(&self, _ctx: C, _writer: &mut W) -> Result<(), Error>
@@ -677,5 +782,12 @@ impl<C, A> Decode<C> for PhantomData<A> {
         R: io::Read,
     {
         Ok(PhantomData)
+    }
+}
+
+impl<A, Ctx> EncodedSize<Ctx> for PhantomData<A> {
+    #[inline]
+    fn encoded_size(&self, _ctx: Ctx) -> usize {
+        0
     }
 }

@@ -55,5 +55,12 @@ macro_rules! magic_bytes {
                 Ok(Self)
             }
         }
+
+        impl<'a, Ctx> $crate::EncodedSize<Ctx> for $name {
+            #[inline]
+            fn encoded_size(&self, _ctx: Ctx) -> usize {
+                $bytes.len()
+            }
+        }
     )*}
 }

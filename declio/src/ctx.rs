@@ -1,7 +1,7 @@
 //! Types that give context to encoders and decoders.
 
 /// The endianness, or byte order, of primitive types.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endian {
     /// Big-endian (most-significant-byte first).
     Big,
@@ -32,5 +32,5 @@ impl Endian {
 }
 
 /// The number of elements in variable-sized containers.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Len(pub usize);

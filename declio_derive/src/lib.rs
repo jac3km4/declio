@@ -27,6 +27,16 @@ pub fn derive_decode(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .into()
 }
 
+#[proc_macro_derive(EncodedSize, attributes(declio))]
+pub fn derive_encoded_size(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    ContainerReceiver::from_derive_input(&input)
+        .and_then(|receiver| receiver.validate())
+        .map(|data| data.encoded_size_impl().into_token_stream())
+        .unwrap_or_else(|error| error.write_errors())
+        .into()
+}
+
 #[derive(FromDeriveInput)]
 #[darling(attributes(declio))]
 struct ContainerReceiver {
@@ -67,6 +77,7 @@ struct ContainerData {
     id_decode_ctx: TokenStream,
     id_encoder: Option<TokenStream>,
     id_decoder: Option<TokenStream>,
+    id_encoded_size: Option<TokenStream>,
     id_check_expr: Option<TokenStream>,
     id_decode_expr: Option<TokenStream>,
     variants: Vec<VariantData>,
@@ -147,40 +158,41 @@ impl ContainerReceiver {
                 }
             });
 
-        let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr.decode(), &self.id_type)
-        {
-            (None, None) => (None, None, Some(quote!(()))),
-            (Some(lit), None) => {
-                let expr = match lit.parse() {
-                    Ok(expr) => expr,
-                    Err(error) => {
-                        errors.push(from_syn_error(error));
-                        quote!(unreachable!("compile error"))
-                    }
-                };
-                (None, None, Some(expr))
-            }
-            (None, Some(lit)) => {
-                let ty = match lit.parse() {
-                    Ok(ty) => ty,
-                    Err(error) => {
-                        errors.push(from_syn_error(error));
-                        quote!(())
-                    }
-                };
-                (
-                    Some(quote!( <#ty as #crate_path::Encode<_>>::encode )),
-                    Some(quote!( <#ty as #crate_path::Decode<_>>::decode )),
-                    None,
-                )
-            }
-            (Some(..), Some(..)) => {
-                errors.push(Error::custom(
+        let (id_encoder, id_decoder, id_encoded_size, id_decode_expr) =
+            match (&self.id_expr.decode(), &self.id_type) {
+                (None, None) => (None, None, None, Some(quote!(()))),
+                (Some(lit), None) => {
+                    let expr = match lit.parse() {
+                        Ok(expr) => expr,
+                        Err(error) => {
+                            errors.push(from_syn_error(error));
+                            quote!(unreachable!("compile error"))
+                        }
+                    };
+                    (None, None, None, Some(expr))
+                }
+                (None, Some(lit)) => {
+                    let ty = match lit.parse() {
+                        Ok(ty) => ty,
+                        Err(error) => {
+                            errors.push(from_syn_error(error));
+                            quote!(())
+                        }
+                    };
+                    (
+                        Some(quote!( <#ty as #crate_path::Encode<_>>::encode )),
+                        Some(quote!( <#ty as #crate_path::Decode<_>>::decode )),
+                        Some(quote!( <#ty as #crate_path::EncodedSize<_>>::encoded_size )),
+                        None,
+                    )
+                }
+                (Some(..), Some(..)) => {
+                    errors.push(Error::custom(
                     "`id_expr(decode = \"...\")` and `id_type` are incompatible with each other",
                 ));
-                (None, None, None)
-            }
-        };
+                    (None, None, None, None)
+                }
+            };
         let id_check_expr = match &self.id_expr.encode() {
             Some(lit) => {
                 let expr = match lit.parse() {
@@ -256,6 +268,7 @@ impl ContainerReceiver {
                 id_decode_ctx,
                 id_encoder,
                 id_decoder,
+                id_encoded_size,
                 id_decode_expr,
                 id_check_expr,
                 variants,
@@ -293,7 +306,7 @@ impl ContainerData {
                 let mut wher = copy
                     .where_clause
                     .clone()
-                    .unwrap_or(WhereClause::parse.parse2(quote! {where}).unwrap());
+                    .unwrap_or_else(|| WhereClause::parse.parse2(quote! {where}).unwrap());
                 wher.predicates.push(
                     WherePredicate::parse
                         .parse2(quote! { #param_ty: Copy })
@@ -366,7 +379,7 @@ impl ContainerData {
                 let mut wher = copy
                     .where_clause
                     .clone()
-                    .unwrap_or(WhereClause::parse.parse2(quote! {where}).unwrap());
+                    .unwrap_or_else(|| WhereClause::parse.parse2(quote! {where}).unwrap());
                 wher.predicates.push(
                     WherePredicate::parse
                         .parse2(quote! { #param_ty: Copy })
@@ -408,6 +421,67 @@ impl ContainerData {
                     match #id_decode_expr {
                         #( #variant_arm )*
                         other => Err(#crate_path::Error::new(format!("unknown id value: {:?}", other))),
+                    }
+                }
+            }
+        }
+    }
+
+    fn encoded_size_impl(&self) -> TokenStream {
+        let Self {
+            ident,
+            crate_path,
+            encode_ctx_is,
+            encode_ctx_pat,
+            encode_ctx_type,
+            ..
+        } = self;
+
+        let (impl_generics, encode_ctx_pat, encode_ctx_type, where_clause) = match encode_ctx_type {
+            Some(typ) => (
+                self.generics.clone(),
+                encode_ctx_pat.clone().unwrap(),
+                typ.clone(),
+                self.generics.where_clause.clone(),
+            ),
+            None => {
+                let mut copy = self.generics.clone();
+                let param_ty = quote!(Ctx);
+                let param_name = quote!(ctx);
+                let param = GenericParam::parse.parse2(param_ty.clone()).unwrap();
+                copy.params.push(param);
+                let mut wher = copy
+                    .where_clause
+                    .clone()
+                    .unwrap_or_else(|| WhereClause::parse.parse2(quote! {where}).unwrap());
+                wher.predicates.push(
+                    WherePredicate::parse
+                        .parse2(quote! { #param_ty: Copy })
+                        .unwrap(),
+                );
+                (copy, param_name, param_ty, Some(wher))
+            }
+        };
+        let (_, ident_generics, _) = self.generics.split_for_impl();
+
+        let variant_arm = self.variants.iter().map(|variant| {
+            variant.encoded_size_arm(
+                self.id_encoded_size.as_ref(),
+                &self.id_encode_ctx,
+                encode_ctx_is.as_ref(),
+                &encode_ctx_pat,
+            )
+        });
+
+        quote! {
+            #[allow(non_shorthand_field_patterns)]
+            impl #impl_generics #crate_path::EncodedSize<#encode_ctx_type> for #ident #ident_generics
+                #where_clause
+            {
+                fn encoded_size(&self, #encode_ctx_pat: #encode_ctx_type) -> usize
+                {
+                    match self {
+                        #( #variant_arm, )*
                     }
                 }
             }
@@ -624,6 +698,58 @@ impl VariantData {
             }
         }
     }
+
+    fn encoded_size_arm(
+        &self,
+        id_encoded_size: Option<&TokenStream>,
+        id_encode_ctx: &TokenStream,
+        encode_ctx_is: Option<&TokenStream>,
+        encode_ctx_pat: &TokenStream,
+    ) -> TokenStream {
+        let Self { id_expr, .. } = self;
+
+        let path = match &self.ident {
+            Some(ident) => quote!(Self::#ident),
+            None => quote!(Self),
+        };
+
+        let field_pat = self.fields.iter().map(|field| {
+            let FieldData {
+                stored_ident,
+                public_ref_ident,
+                ..
+            } = field;
+            match stored_ident {
+                Some(stored_ident) => quote!(#stored_ident: #public_ref_ident),
+                None => quote!(#public_ref_ident),
+            }
+        });
+        let pat_fields = match self.style {
+            ast::Style::Tuple => quote!( ( #( #field_pat, )* ) ),
+            ast::Style::Struct => quote!( { #( #field_pat, )* } ),
+            ast::Style::Unit => quote!(),
+        };
+
+        let id_encode_stmt = id_encoded_size
+            .map(|encoder| {
+                quote! {
+                    #encoder(&(#id_expr), #id_encode_ctx)
+                }
+            })
+            .unwrap_or(quote!(0));
+
+        let field_encode_expr = self
+            .fields
+            .iter()
+            .map(|field| field.encoded_size_expr(encode_ctx_is, encode_ctx_pat));
+
+        quote! {
+            #path #pat_fields => {
+                #id_encode_stmt
+                #( + #field_encode_expr )*
+            }
+        }
+    }
 }
 
 #[derive(FromField)]
@@ -656,6 +782,7 @@ struct FieldData {
     decode_ctx: Option<TokenStream>,
     encoder: TokenStream,
     decoder: TokenStream,
+    encoded_size: TokenStream,
     skip_if: Option<TokenStream>,
 }
 
@@ -717,6 +844,11 @@ impl FieldReceiver {
             }
         };
 
+        let encoded_size = match &self.with {
+            None => quote!(<#ty as #crate_path::EncodedSize<_>>::encoded_size),
+            Some(with) => quote!(#with::encoded_size),
+        };
+
         let skip_if = match &self.skip_if {
             Some(lit) => match lit.parse() {
                 Ok(expr) => Some(expr),
@@ -737,6 +869,7 @@ impl FieldReceiver {
                 decode_ctx,
                 encoder,
                 decoder,
+                encoded_size,
                 skip_if,
             })
         } else {
@@ -811,6 +944,36 @@ impl FieldData {
                 }
             },
             None => raw_decoder,
+        }
+    }
+
+    fn encoded_size_expr(
+        &self,
+        encode_ctx_is: Option<&TokenStream>,
+        encode_ctx_pat: &TokenStream,
+    ) -> TokenStream {
+        let Self {
+            public_ref_ident,
+            encoded_size,
+            encode_ctx,
+            ..
+        } = self;
+        let actual_ctx = encode_ctx
+            .as_ref()
+            .or(encode_ctx_is)
+            .unwrap_or(encode_ctx_pat);
+        let raw_encoder = quote! {
+            #encoded_size(#public_ref_ident, #actual_ctx)
+        };
+        match &self.skip_if {
+            Some(skip_if) => quote! {
+                if #skip_if {
+                    0
+                } else {
+                    #raw_encoder
+                }
+            },
+            None => raw_encoder,
         }
     }
 }

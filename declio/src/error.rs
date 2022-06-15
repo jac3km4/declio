@@ -55,7 +55,7 @@ impl fmt::Display for Error {
             .source
             .as_ref()
             .map(|err| format!(" ({})", err))
-            .unwrap_or("".to_owned());
+            .unwrap_or_else(|| "".to_owned());
         write!(f, "{} ({})", self.message, source)
     }
 }
