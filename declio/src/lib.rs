@@ -157,6 +157,10 @@ pub use declio_derive::Decode;
 /// Implements [`Encode`] for a given type. For more information, see [`derive`](derive/index.html).
 pub use declio_derive::Encode;
 
+#[cfg(feature = "derive")]
+/// Implements [`Encode`] for a given type. For more information, see [`derive`](derive/index.html).
+pub use declio_derive::EncodedSize;
+
 use self::ctx::{Endian, Len};
 use std::borrow::Cow;
 use std::{io, mem};

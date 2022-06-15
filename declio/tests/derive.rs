@@ -1,7 +1,6 @@
 use declio::ctx::Endian;
 use declio::util::{BigEndian, Bytes, PrefixVec};
 use declio::{ctx, to_bytes_with_context, Decode, Encode, EncodedSize};
-use declio_derive::EncodedSize;
 use std::fmt::Debug;
 use std::io;
 
