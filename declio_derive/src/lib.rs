@@ -765,6 +765,9 @@ struct FieldReceiver {
     with: Option<syn::Path>,
 
     #[darling(default)]
+    via: Option<syn::Path>,
+
+    #[darling(default)]
     encode_with: Option<syn::Path>,
 
     #[darling(default)]
@@ -820,10 +823,11 @@ impl FieldReceiver {
             None => None,
         };
 
-        let encoder = match (&self.encode_with, &self.with) {
-            (None, None) => quote!(<#ty as #crate_path::Encode<_>>::encode),
-            (Some(encode_with), None) => quote!(#encode_with),
-            (None, Some(with)) => quote!(#with::encode),
+        let encoder = match (&self.encode_with, &self.with, &self.via) {
+            (None, None, None) => quote!(<#ty as #crate_path::Encode<_>>::encode),
+            (None, None, Some(via)) => quote!(#crate_path::via::Via::<#ty, #via>::encode),
+            (Some(encode_with), None, None) => quote!(#encode_with),
+            (None, Some(with), None) => quote!(#with::encode),
             _ => {
                 errors.push(Error::custom(
                     "`encode_with` and `with` are incompatible with each other",
@@ -832,10 +836,11 @@ impl FieldReceiver {
             }
         };
 
-        let decoder = match (&self.decode_with, &self.with) {
-            (None, None) => quote!(<#ty as #crate_path::Decode<_>>::decode),
-            (Some(decode_with), None) => quote!(#decode_with),
-            (None, Some(with)) => quote!(#with::decode),
+        let decoder = match (&self.decode_with, &self.with, &self.via) {
+            (None, None, None) => quote!(<#ty as #crate_path::Decode<_>>::decode),
+            (None, None, Some(via)) => quote!(#crate_path::via::Via::<#ty, #via>::decode),
+            (Some(decode_with), None, None) => quote!(#decode_with),
+            (None, Some(with), None) => quote!(#with::decode),
             _ => {
                 errors.push(Error::custom(
                     "`decode_with` and `with` are incompatible with each other",
@@ -844,9 +849,16 @@ impl FieldReceiver {
             }
         };
 
-        let encoded_size = match &self.with {
-            None => quote!(<#ty as #crate_path::EncodedSize<_>>::encoded_size),
-            Some(with) => quote!(#with::encoded_size),
+        let encoded_size = match (&self.with, &self.via) {
+            (None, None) => quote!(<#ty as #crate_path::EncodedSize<_>>::encoded_size),
+            (None, Some(via)) => quote!(#crate_path::via::Via::<#ty, #via>::encoded_size),
+            (Some(with), None) => quote!(#with::encoded_size),
+            _ => {
+                errors.push(Error::custom(
+                    "`with` and `via` are incompatible with each other",
+                ));
+                quote!(__compile_error_throwaway)
+            }
         };
 
         let skip_if = match &self.skip_if {

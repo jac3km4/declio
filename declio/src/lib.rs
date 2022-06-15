@@ -141,6 +141,7 @@ mod macros;
 pub mod ctx;
 pub mod derive;
 pub mod util;
+pub mod via;
 
 pub use self::error::Error;
 

@@ -1,5 +1,5 @@
 use declio::ctx::Endian;
-use declio::util::BigEndian;
+use declio::util::{BigEndian, Bytes, PrefixVec};
 use declio::{ctx, to_bytes_with_context, Decode, Encode, EncodedSize};
 use declio_derive::EncodedSize;
 use std::fmt::Debug;
@@ -32,6 +32,15 @@ enum Enum {
 struct With {
     #[declio(with = "little_endian")]
     y: u32,
+}
+
+#[derive(Debug, PartialEq, Encode, Decode, EncodedSize)]
+#[declio(ctx_is = "Endian::Little")]
+struct Via {
+    #[declio(via = "PrefixVec<u8, u32>")]
+    x: Vec<u32>,
+    #[declio(via = "Bytes<u16>")]
+    y: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
@@ -242,4 +251,16 @@ fn skip_if() {
     };
     assert_eq!(some.encoded_size(()), 5);
     test_bidir(some, &[0x07, 0x00, 0x00, 0x00, 0x02]);
+}
+
+#[test]
+fn via() {
+    let val = Via {
+        x: vec![1],
+        y: vec![2],
+    };
+    assert_eq!(val.encoded_size(()), 8);
+    let r = to_bytes_with_context(val, ()).unwrap();
+
+    assert_eq!(r, vec![0x1, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x2])
 }

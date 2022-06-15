@@ -1,5 +1,7 @@
 //! Utilities that aren't part of the "core" of declio, but may be useful in reducing boilerplate.
 
+use std::borrow::Cow;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use crate::ctx::{Endian, Len};
@@ -53,6 +55,16 @@ macro_rules! endian_wrappers {
                 Self(value)
             }
         }
+
+        impl<T: Copy> From<&T> for $name<T> {
+            fn from(value: &T) -> Self {
+                Self(*value)
+            }
+        }
+
+            // fn from(value: &T) -> Self {
+                // Self(*value)
+            // }
 
         /* NB: Orphan rules prohibit something like this:
         impl<T> From<$name<T>> for T {
@@ -410,12 +422,12 @@ impl<Ctx> EncodedSize<Ctx> for NoPrefix {
 }
 
 #[derive(Debug, Clone)]
-pub struct Bytes<P = NoPrefix>(Vec<u8>, PhantomData<P>);
+pub struct Bytes<'a, P = NoPrefix>(Cow<'a, [u8]>, PhantomData<P>);
 
-impl<P> Bytes<P> {
+impl<'a, P> Bytes<'a, P> {
     #[inline]
     pub const fn new(vec: Vec<u8>) -> Self {
-        Self(vec, PhantomData)
+        Self(Cow::Owned(vec), PhantomData)
     }
 
     #[inline]
@@ -425,11 +437,28 @@ impl<P> Bytes<P> {
 
     #[inline]
     pub fn into_vec(self) -> Vec<u8> {
-        self.0
+        self.0.into_owned()
     }
 }
 
-impl<C> Encode<C> for Bytes {
+impl<'a, S, P> From<&'a S> for Bytes<'a, P>
+where
+    S: AsRef<[u8]>,
+{
+    #[inline]
+    fn from(val: &'a S) -> Self {
+        Self(Cow::Borrowed(val.as_ref()), PhantomData)
+    }
+}
+
+impl<'a, P> From<Bytes<'a, P>> for Vec<u8> {
+    #[inline]
+    fn from(val: Bytes<'a, P>) -> Self {
+        val.into_vec()
+    }
+}
+
+impl<'a, C> Encode<C> for Bytes<'a> {
     #[inline]
     fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), Error>
     where
@@ -440,7 +469,7 @@ impl<C> Encode<C> for Bytes {
     }
 }
 
-impl Decode<Len> for Bytes {
+impl<'a> Decode<Len> for Bytes<'a> {
     #[inline]
     fn decode<R>(len: Len, reader: &mut R) -> Result<Self, Error>
     where
@@ -452,7 +481,7 @@ impl Decode<Len> for Bytes {
     }
 }
 
-impl<P, C> Encode<C> for Bytes<P>
+impl<'a, P, C> Encode<C> for Bytes<'a, P>
 where
     P: Encode<C> + TryFrom<usize>,
     P::Error: std::error::Error,
@@ -468,7 +497,7 @@ where
     }
 }
 
-impl<P, C> Decode<C> for Bytes<P>
+impl<'a, P, C> Decode<C> for Bytes<'a, P>
 where
     P: Decode<C> + TryInto<usize>,
     P::Error: std::error::Error,
@@ -484,12 +513,102 @@ where
     }
 }
 
-impl<P, Ctx> EncodedSize<Ctx> for Bytes<P>
+impl<'a, P, Ctx> EncodedSize<Ctx> for Bytes<'a, P>
 where
     P: EncodedSize<Ctx> + Default,
 {
     #[inline]
     fn encoded_size(&self, ctx: Ctx) -> usize {
         P::default_encoded_size(ctx) + self.0.len()
+    }
+}
+
+#[derive(Clone)]
+pub struct PrefixVec<'a, P, A>(Cow<'a, [A]>, PhantomData<P>)
+where
+    [A]: ToOwned;
+
+impl<'a, P, A> PrefixVec<'a, P, A>
+where
+    A: Clone,
+{
+    #[inline]
+    pub const fn new(vec: Vec<A>) -> Self {
+        Self(Cow::Owned(vec), PhantomData)
+    }
+
+    #[inline]
+    pub fn into_vec(self) -> Vec<A> {
+        self.0.into_owned()
+    }
+}
+
+impl<'a, S, P, A> From<&'a S> for PrefixVec<'a, P, A>
+where
+    S: AsRef<[A]>,
+    A: Clone,
+{
+    #[inline]
+    fn from(val: &'a S) -> Self {
+        Self(Cow::Borrowed(val.as_ref()), PhantomData)
+    }
+}
+
+impl<'a, P, A> From<PrefixVec<'a, P, A>> for Vec<A>
+where
+    A: Clone,
+{
+    #[inline]
+    fn from(val: PrefixVec<'a, P, A>) -> Self {
+        val.into_vec()
+    }
+}
+
+impl<'a, Ctx, P, A> Encode<Ctx> for PrefixVec<'a, P, A>
+where
+    P: Encode<Ctx> + TryFrom<usize>,
+    P::Error: std::error::Error,
+    A: Encode<Ctx> + Clone,
+    Ctx: Clone,
+{
+    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    where
+        W: std::io::Write,
+    {
+        let size: P = self.0.len().try_into().map_err(Error::new)?;
+        size.encode(ctx.clone(), writer)?;
+        self.0.as_ref().encode((ctx,), writer)?;
+        Ok(())
+    }
+}
+
+impl<'a, Ctx, P, A> Decode<Ctx> for PrefixVec<'a, P, A>
+where
+    P: Decode<Ctx> + TryInto<usize>,
+    P::Error: std::error::Error,
+    A: Decode<Ctx> + Clone,
+    Ctx: Clone,
+{
+    fn decode<R>(ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    where
+        R: std::io::Read,
+    {
+        let size = P::decode(ctx.clone(), reader)?
+            .try_into()
+            .map_err(Error::new)?;
+        let buf = Decode::decode((Len(size), ctx), reader)?;
+        Ok(Self::new(buf))
+    }
+}
+
+impl<'a, Ctx, P, A> EncodedSize<Ctx> for PrefixVec<'a, P, A>
+where
+    P: EncodedSize<Ctx> + Default,
+    A: EncodedSize<Ctx> + Clone,
+    Ctx: Clone,
+{
+    fn encoded_size(&self, ctx: Ctx) -> usize {
+        let vec_size: usize = self.0.iter().map(|el| el.encoded_size(ctx.clone())).sum();
+        P::default_encoded_size(ctx) + vec_size
     }
 }
