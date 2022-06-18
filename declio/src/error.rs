@@ -1,21 +1,26 @@
 use std::fmt;
 
 /// Encoding and decoding errors.
-pub struct Error {
-    message: String,
-    source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+// pub struct Error {
+//     message: String,
+//     source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+// }
+
+pub enum Error {
+    TagError(Box<dyn std::error::Error + Send + Sync>),
+    FieldError(&'static str, Box<dyn std::error::Error + Send + Sync>),
+    RemainingBytes(usize),
+    UnexpectedLength { expected: usize, received: usize },
+    Custom(String),
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl Error {
-    /// `Creates a new `Error` with the given message.
     pub fn new<S>(message: S) -> Self
     where
         S: ToString,
     {
-        Self {
-            message: message.to_string(),
-            source: None,
-        }
+        Self::Custom(message.to_string())
     }
 
     /// Creates a new `Error` with the given error value as the source.
@@ -23,22 +28,7 @@ impl Error {
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        Self {
-            message: error.to_string(),
-            source: Some(Box::new(error)),
-        }
-    }
-
-    /// Creates a new `Error` with a custom message and a source error value.
-    pub fn with_context<S, E>(message: S, error: E) -> Self
-    where
-        S: ToString,
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        Self {
-            message: message.to_string(),
-            source: Some(Box::new(error)),
-        }
+        Self::Other(error.into())
     }
 }
 
@@ -51,21 +41,29 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let source = self
-            .source
-            .as_ref()
-            .map(|err| format!(" ({})", err))
-            .unwrap_or_else(|| "".to_owned());
-        write!(f, "{} ({})", self.message, source)
+        match self {
+            Error::TagError(err) => write!(f, "error at enum tag: {err}"),
+            Error::FieldError(field, err) => write!(f, "error at {field}: {err}"),
+            Error::RemainingBytes(bytes) => write!(f, "{bytes} bytes left in the input"),
+            Error::UnexpectedLength { expected, received } => {
+                write!(f, "unexpected slice length {received}, expected {expected}")
+            }
+            Error::Custom(msg) => write!(f, "{msg}"),
+            Error::Other(other) => write!(f, "{}", other),
+        }
     }
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source
-            .as_ref()
-            .map(Box::as_ref)
-            .map(|e| e as &(dyn std::error::Error + 'static))
+        match self {
+            Error::TagError(inner) => Some(inner.as_ref()),
+            Error::FieldError(_, inner) => Some(inner.as_ref()),
+            Error::RemainingBytes(_) => None,
+            Error::UnexpectedLength { .. } => None,
+            Error::Custom(_) => None,
+            Error::Other(inner) => Some(inner.as_ref()),
+        }
     }
 }
 

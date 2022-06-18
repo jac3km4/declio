@@ -403,7 +403,7 @@ impl ContainerData {
         let id_decode_expr = match (id_decoder, id_decode_expr) {
             (Some(decoder), None) => quote! {
                 #decoder(#id_decode_ctx, #reader_binding)
-                    .map_err(|e| #crate_path::Error::with_context("error decoding enum id", e))?
+                    .map_err(|e| #crate_path::Error::TagError(e.into()))?
             },
             (None, Some(decode_expr)) => quote!(#decode_expr),
             _ => unreachable!(),
@@ -632,7 +632,7 @@ impl VariantData {
         let id_encode_stmt = id_encoder.map(|encoder| {
             quote! {
                 #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)
-                    .map_err(|e| #crate_path::Error::with_context("error encoding enum id", e))?;
+                    .map_err(|e| #crate_path::Error::TagError(e.into()))?;
             }
         });
 
@@ -904,14 +904,14 @@ impl FieldData {
             encode_ctx,
             ..
         } = self;
-        let error_context = format!("error encoding field {}", public_ref_ident);
+        let field_name = public_ref_ident.to_string();
         let actual_ctx = encode_ctx
             .as_ref()
             .or(encode_ctx_is)
             .unwrap_or(encode_ctx_pat);
         let raw_encoder = quote! {
             #encoder(#public_ref_ident, #actual_ctx, #writer_binding)
-                .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
+                .map_err(|e| #crate_path::Error::FieldError(#field_name, e.into()))?
         };
         match &self.skip_if {
             Some(skip_if) => quote! {
@@ -938,14 +938,14 @@ impl FieldData {
             decoder,
             ..
         } = self;
-        let error_context = format!("error decoding field {}", public_ref_ident);
+        let field_name = public_ref_ident.to_string();
         let actual_ctx = decode_ctx
             .as_ref()
             .or(decode_ctx_is)
             .unwrap_or(decode_ctx_pat);
         let raw_decoder = quote! {
             #decoder(#actual_ctx, #reader_binding)
-                .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
+                .map_err(|e| #crate_path::Error::FieldError(#field_name, e.into()))?
         };
         match &self.skip_if {
             Some(skip_if) => quote! {

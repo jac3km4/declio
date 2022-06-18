@@ -206,7 +206,7 @@ where
     if bytes.is_empty() {
         Ok(value)
     } else {
-        Err(Error::new("byte slice was not fully consumed"))
+        Err(Error::RemainingBytes(bytes.len()))
     }
 }
 
@@ -269,9 +269,10 @@ where
         W: io::Write,
     {
         if self.len() != len {
-            Err(Error::new(
-                "provided length context does not match the slice length",
-            ))
+            Err(Error::UnexpectedLength {
+                expected: len,
+                received: self.len(),
+            })
         } else {
             self.encode((inner_ctx,), writer)
         }
