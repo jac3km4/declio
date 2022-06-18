@@ -411,6 +411,38 @@ impl From<ZeroOne> for bool {
     }
 }
 
+pub mod byte_array {
+    use crate::Error;
+
+    #[inline]
+    pub fn encode<Ctx, W, const N: usize>(
+        arr: &[u8; N],
+        _ctx: Ctx,
+        writer: &mut W,
+    ) -> Result<(), Error>
+    where
+        W: std::io::Write,
+    {
+        writer.write_all(arr)?;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn decode<Ctx, R, const N: usize>(_ctx: Ctx, reader: &mut R) -> Result<[u8; N], Error>
+    where
+        R: std::io::Read,
+    {
+        let mut arr = [0; N];
+        reader.read_exact(&mut arr)?;
+        Ok(arr)
+    }
+
+    #[inline]
+    pub fn encoded_size<Ctx, const N: usize>(_val: &[u8; N], _ctx: Ctx) -> usize {
+        N
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct NoPrefix;
 

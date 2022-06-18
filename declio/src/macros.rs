@@ -33,23 +33,22 @@ macro_rules! magic_bytes {
             #[inline]
             fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), $crate::Error>
             where
-                W: std::io::Write,
+                W: ::std::io::Write,
             {
-                ($bytes).encode((), writer)
+                $crate::util::byte_array::encode($bytes, (), writer)
             }
         }
 
         impl <C> $crate::Decode<C> for $name {
-            #[inline]
             fn decode<R>(_ctx: C, reader: &mut R) -> Result<Self, $crate::Error>
             where
-                R: std::io::Read,
+                R: ::std::io::Read,
             {
-                let bytes: [u8; ($bytes).len()] = $crate::Decode::decode((), reader)?;
+                let bytes: [u8; ($bytes).len()] = $crate::util::byte_array::decode((), reader)?;
                 if &bytes != $bytes {
                     return Err($crate::Error::new(format!(
                         "magic bytes mismatch: expected {:x?}, got {:x?}",
-                        $bytes, bytes,
+                        &$bytes[..], &bytes[..],
                     )));
                 }
                 Ok(Self)
