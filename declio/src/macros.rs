@@ -29,7 +29,7 @@ macro_rules! magic_bytes {
         $(#[$attr])*
         $vis struct $name;
 
-        impl <C>$crate::Encode<C> for $name {
+        impl <C> $crate::Encode<C> for $name {
             #[inline]
             fn encode<W>(&self, _ctx: C, writer: &mut W) -> Result<(), $crate::Error>
             where
@@ -55,7 +55,7 @@ macro_rules! magic_bytes {
             }
         }
 
-        impl<'a, Ctx> $crate::EncodedSize<Ctx> for $name {
+        impl<Ctx> $crate::EncodedSize<Ctx> for $name {
             #[inline]
             fn encoded_size(&self, _ctx: Ctx) -> usize {
                 $bytes.len()

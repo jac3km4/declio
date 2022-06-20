@@ -331,7 +331,7 @@ impl ContainerData {
         });
 
         quote! {
-            #[allow(non_shorthand_field_patterns)]
+            #[allow(non_shorthand_field_patterns, unused_unit)]
             impl #impl_generics #crate_path::Encode<#encode_ctx_type> for #ident #ident_generics
                 #where_clause
             {
